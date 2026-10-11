@@ -279,6 +279,9 @@ fn add_craft_fonts(fonts: &mut FontDefinitions) {
 /// Apply tokens to egui's global style.
 pub fn apply(ctx: &egui::Context, b: Brightness) {
     let t = Tokens::for_brightness(b);
+    // Pin egui's theme so a system `prefers-color-scheme` change cannot swap in the stock
+    // visuals of the other mode: only the active mode is styled below.
+    ctx.set_theme(if t.dark { egui::Theme::Dark } else { egui::Theme::Light });
     ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, t));
     let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.panel;

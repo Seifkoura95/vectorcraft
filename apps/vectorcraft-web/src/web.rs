@@ -14,6 +14,7 @@ use vectorcraft_ui_egui::graphics::GraphicsLoss;
 use vectorcraft_ui_egui::i18n;
 use vectorcraft_ui_egui::place::{DropTarget, PlaceArrival, PlaceInbox};
 use vectorcraft_ui_egui::print::{PrintJob, PrintService, Printer};
+use vectorcraft_ui_egui::theme::Brightness;
 use vectorcraft_ui_egui::{Services, VectorcraftApp};
 use wasm_bindgen::JsCast as _;
 
@@ -33,6 +34,25 @@ struct Pasted {
     ctx: Option<egui::Context>,
 }
 
+/// A UI brightness asked for from outside the frame loop (SimpleHub's `theme` bridge property
+/// and `set_theme`). `wanted` is taken by the shell on its next frame; `ctx` lets the requester
+/// ask for that frame (the current runner's, so it survives a graphics restart).
+#[derive(Default)]
+struct ThemeLink {
+    wanted: Cell<Option<Brightness>>,
+    ctx: RefCell<Option<egui::Context>>,
+}
+
+impl ThemeLink {
+    #[cfg_attr(not(feature = "simplehub"), allow(dead_code))]
+    fn request(&self, b: Brightness) {
+        self.wanted.set(Some(b));
+        if let Some(ctx) = self.ctx.borrow().as_ref() {
+            ctx.request_repaint();
+        }
+    }
+}
+
 const CANVAS_ID: &str = "vectorcraft_canvas";
 const LOADING_ID: &str = "vectorcraft_loading";
 
@@ -48,6 +68,8 @@ struct Host {
     place_inbox: PlaceInbox,
     drag: DragPos,
     pasted: Rc<RefCell<Pasted>>,
+    /// A UI brightness the host asked for, applied on the next frame.
+    theme: Rc<ThemeLink>,
     /// The page's Web Locks for Data Recovery, started once before the first frame: a graphics
     /// restart keeps them, so the tab stays the owner of its recovery area.
     locks: Option<WebLocks>,
@@ -75,6 +97,7 @@ pub fn start() {
             place_inbox: Arc::default(),
             drag: DragPos::default(),
             pasted: Rc::default(),
+            theme: Rc::default(),
             locks,
             restarts: 0,
         };
@@ -115,6 +138,7 @@ async fn run(host: Host, canvas: web_sys::HtmlCanvasElement, moving: Option<Movi
                     rs.device.set_device_lost_callback(move |reason, msg| loss.report(&ctx, format!("{reason:?}: {msg}")));
                 }
                 host.pasted.borrow_mut().ctx = Some(ctx.clone());
+                *host.theme.ctx.borrow_mut() = Some(ctx.clone());
                 let services = services(&host, ctx.clone());
                 let app = match taken.borrow_mut().take() {
                     Some(mut app) => {
@@ -355,6 +379,12 @@ impl eframe::App for WebShell {
             self.restart(&why);
         }
         let Some(app) = &mut self.app else { return };
+        if let Some(b) = self.host.theme.wanted.take() {
+            // Window → UI Brightness: the next `apply_runtime` restyles egui from the new tokens.
+            if let Err(e) = app.run("window.brightness", serde_json::json!({"brightness": b.id()})) {
+                log::error!("vectorcraft-web: couldn't apply the host's theme: {e}");
+            }
+        }
         let pasted = self.host.pasted.borrow_mut().flavour.take();
         if let Some((f, held)) = pasted {
             app.paste_from_host(ctx, f, held);
@@ -617,7 +647,9 @@ fn print_pdf(pdf: &[u8]) -> Result<(), String> {
 mod simplehub {
     use std::sync::Arc;
 
-    use super::{FileServices, Host, Inbox, PlaceArrival, PlaceInbox, WebLocks, detect_language, run, track_paste};
+    use std::rc::Rc;
+
+    use super::{Brightness, FileServices, Host, Inbox, PlaceArrival, PlaceInbox, ThemeLink, WebLocks, detect_language, run, track_paste};
     use wasm_bindgen::JsCast as _;
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
@@ -626,6 +658,7 @@ mod simplehub {
     #[wasm_bindgen]
     pub struct VectorHandle {
         runner: eframe::WebRunner,
+        theme: Rc<ThemeLink>,
     }
 
     #[wasm_bindgen]
@@ -637,13 +670,38 @@ mod simplehub {
         pub fn has_panicked(&self) -> bool {
             self.runner.has_panicked()
         }
+
+        /// Switches the running app to `"dark"` or `"light"` on its next frame. Other values are
+        /// ignored.
+        pub fn set_theme(&self, theme: &str) {
+            if let Some(b) = parse_theme(theme) {
+                self.theme.request(b);
+            }
+        }
     }
 
-    /// Starts Simple Vector on `canvas`, with `bridge` providing open and save.
+    /// SimpleHub's two themes on Simple Vector's four UI brightness levels: `"dark"` is Dark and
+    /// `"light"` is Light (the app's own default is Medium Dark).
+    fn parse_theme(theme: &str) -> Option<Brightness> {
+        match theme.trim().to_ascii_lowercase().as_str() {
+            "dark" => Some(Brightness::Dark),
+            "light" => Some(Brightness::Light),
+            _ => None,
+        }
+    }
+
+    /// Starts Simple Vector on `canvas`, with `bridge` providing open and save. An optional
+    /// `theme` property (`"dark"` or `"light"`) on the bridge picks the UI brightness before the
+    /// first frame; without it the app keeps its default (Medium Dark).
     #[wasm_bindgen]
     pub async fn start_simple_vector(canvas: web_sys::HtmlCanvasElement, bridge: JsValue) -> Result<VectorHandle, JsValue> {
         eframe::WebLogger::init(log::LevelFilter::Info).ok();
         detect_language();
+        let theme = Rc::new(ThemeLink::default());
+        if let Some(b) = js_sys::Reflect::get(&bridge, &JsValue::from_str("theme")).ok().and_then(|v| v.as_string()).and_then(|s| parse_theme(&s)) {
+            // Taken by the shell's first frame, before the app is styled.
+            theme.request(b);
+        }
         // Before the first frame, which looks for copies a crash left behind.
         let locks = WebLocks::start(super::RECOVERY_PREFIX).await;
         let host = Host {
@@ -652,6 +710,7 @@ mod simplehub {
             place_inbox: Arc::default(),
             drag: Default::default(),
             pasted: Default::default(),
+            theme: theme.clone(),
             locks,
             restarts: 0,
             bridge,
@@ -659,7 +718,7 @@ mod simplehub {
         track_paste(&host.pasted);
         let runner = host.runner.clone();
         run(host, canvas, None).await?;
-        Ok(VectorHandle { runner })
+        Ok(VectorHandle { runner, theme })
     }
 
     /// Files through the bridge: `open("document")` for File → Open, `open("place")` for
