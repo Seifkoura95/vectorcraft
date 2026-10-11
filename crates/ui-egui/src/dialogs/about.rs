@@ -9,7 +9,7 @@ pub(super) fn show(app: &mut VectorcraftApp, ctx: &egui::Context) {
         return;
     }
     let mut open = true;
-    egui::Window::new(tl!("About VectorCraft"))
+    egui::Window::new(crate::branded(tl!("About VectorCraft")))
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
@@ -52,22 +52,40 @@ fn about_tab(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
         let (r, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
         crate::brand::paint_mark(ui, r);
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new("VectorCraft").font(theme::semibold(22.0)));
-            ui.label(crate::i18n::fmt(
-                tl!("Version {version} — open-source vector illustration in pure Rust."),
-                &[("version", env!("CARGO_PKG_VERSION"))],
-            ));
+            ui.label(egui::RichText::new(crate::APP_NAME).font(theme::semibold(22.0)));
+            if cfg!(feature = "simplehub") {
+                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+            } else {
+                ui.label(crate::i18n::fmt(
+                    tl!("Version {version} — open-source vector illustration in pure Rust."),
+                    &[("version", env!("CARGO_PKG_VERSION"))],
+                ));
+            }
         });
     });
     ui.add_space(12.0);
-    crate::community::links(app, ui);
-    ui.add_space(12.0);
-    ui.label(
-        egui::RichText::new(tl!(
-            "Part of ArtCraft. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono (OFL). Icons: Lucide (ISC) + VectorCraft."
-        ))
-        .size(11.0),
-    );
+    if cfg!(feature = "simplehub") {
+        // SimpleHub build. VectorCraft is MIT OR Apache-2.0; the licence asks for attribution,
+        // and the ArtCraft community links are left out (the ArtCraft marks are not open source).
+        ui.label("Vector illustration for SimpleHub. Paths, type, gradients and effects, with SVG, PDF and bitmap export.");
+        ui.add_space(12.0);
+        ui.label(
+            egui::RichText::new(
+                "Built on VectorCraft, an open source vector illustration app by the ArtCraft Team and the VectorCraft contributors, used under the MIT or Apache 2.0 licence.",
+            )
+            .size(11.0),
+        );
+        ui.hyperlink_to("github.com/storytold/vectorcraft", "https://github.com/storytold/vectorcraft");
+    } else {
+        crate::community::links(app, ui);
+        ui.add_space(12.0);
+        ui.label(
+            egui::RichText::new(tl!(
+                "Part of ArtCraft. MIT OR Apache-2.0. Fonts: Source Sans 3, Inter, JetBrains Mono (OFL). Icons: Lucide (ISC) + VectorCraft."
+            ))
+            .size(11.0),
+        );
+    }
     // The GPU the window renders with, for bug reports (Preferences › Performance picks it).
     if let Some(adapter) = &app.graphics_adapter {
         ui.add_space(6.0);

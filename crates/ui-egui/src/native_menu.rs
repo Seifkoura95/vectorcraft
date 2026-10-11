@@ -35,7 +35,7 @@ use crate::VectorcraftApp;
 use crate::i18n::{Lang, tr, tr_ctx};
 use crate::menus::{self, Entry};
 
-pub const APP_NAME: &str = "VectorCraft";
+pub const APP_NAME: &str = crate::APP_NAME;
 /// Hide VectorCraft: an item of ours (AppKit's always takes ⌘H, which is View › Hide Edges).
 pub const HIDE: &str = "app.hide";
 /// Hide Others: an item of ours, so a command bound to ⌥⌘H keeps it.

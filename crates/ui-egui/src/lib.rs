@@ -172,6 +172,16 @@ impl FilePick {
     }
 }
 
+/// The name shown to the user in titles, menus, message boxes and the About dialog.
+/// The `simplehub` feature builds the app as Simple Vector inside SimpleHub.
+pub const APP_NAME: &str = if cfg!(feature = "simplehub") { "Simple Vector" } else { "VectorCraft" };
+
+/// A translated UI string that names the product, with the name as built ([`APP_NAME`]): the
+/// catalogs keep "VectorCraft" as it is, so the swap survives translation (`branded(tl!("…"))`).
+pub fn branded(s: &str) -> String {
+    s.replace("VectorCraft", APP_NAME)
+}
+
 pub type PickOpen = Box<dyn FnMut(&FilePick) -> Option<String>>;
 pub type PickSave = Box<dyn FnMut(&FilePick) -> Option<String>>;
 pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;

@@ -296,7 +296,7 @@ fn category_fields(ui: &mut egui::Ui, d: &mut Dialog, cat: &str) {
                 });
                 if sp.key == "gpuPreference" {
                     // The window's graphics device is chosen once, when the app starts.
-                    ui.label(egui::RichText::new(tl!("Applies the next time VectorCraft starts.")).color(t.text_dim).size(11.0));
+                    ui.label(egui::RichText::new(crate::branded(tl!("Applies the next time VectorCraft starts."))).color(t.text_dim).size(11.0));
                 }
             }
             PrefKind::Color => {

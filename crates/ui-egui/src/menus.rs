@@ -27,6 +27,12 @@ pub enum Item {
     Header(&'static str),
 }
 
+/// Menu labels that name the product (`&'static str`, so chosen at build time like
+/// [`crate::APP_NAME`]). The SimpleHub build shows them in English.
+const ABOUT_APP: &str = if cfg!(feature = "simplehub") { "About Simple Vector" } else { "About VectorCraft" };
+const QUIT_APP: &str = if cfg!(feature = "simplehub") { "Quit Simple Vector" } else { "Quit VectorCraft" };
+const HELP_APP: &str = if cfg!(feature = "simplehub") { "Simple Vector Help…" } else { "VectorCraft Help…" };
+
 fn c(label: &'static str, id: &'static str) -> Item {
     Item::Cmd(label, id, Value::Null)
 }
@@ -279,9 +285,9 @@ pub const UI_COMMANDS: &[(&str, &str, &str, &str)] = &[
         "",
         "{} opens the Save PDF dialog; with params = document.exportPdf options written to path (asked when missing; viewAfterSaving opens the file) → {path, bytes, warnings}",
     ),
-    ("help.about", "About VectorCraft", "", "{}"),
+    ("help.about", ABOUT_APP, "", "{}"),
     ("help.commandPalette", "Search Commands…", "Cmd+Shift+/", "{}"),
-    ("app.quit", "Quit VectorCraft", "Cmd+Q", "{}"),
+    ("app.quit", QUIT_APP, "Cmd+Q", "{}"),
     (
         "ui.swatchOptions",
         "Swatch Options…",
@@ -1871,11 +1877,11 @@ fn selected_image(app: &VectorcraftApp, keep: impl Fn(&vectorcraft_doc::ImageObj
 
 pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
     let panel = |label: &'static str, id: &'static str| cp(label, "window.panel", json!({ "panel": id }));
-    vec![
+    without_community(vec![
         (
-            "VectorCraft",
+            crate::APP_NAME,
             vec![
-                c("About VectorCraft", "help.about"),
+                c(ABOUT_APP, "help.about"),
                 c("Join Our Discord", "help.discord"),
                 Sep,
                 c("Settings…", "edit.preferences"),
@@ -1889,7 +1895,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                 Sep,
                 sub("UI Brightness", Brightness::ALL.iter().map(|b| cp(b.label(), "window.brightness", json!({"brightness": b.id()}))).collect()),
                 Sep,
-                c("Quit VectorCraft", "app.quit"),
+                c(QUIT_APP, "app.quit"),
             ],
         ),
         (
@@ -2507,12 +2513,23 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                 c("VectorCraft on GitHub", "help.github"),
                 Sep,
                 c("Search Commands…", "help.commandPalette"),
-                todos("VectorCraft Help…", "F1"),
+                todos(HELP_APP, "F1"),
                 Sep,
-                c("About VectorCraft", "help.about"),
+                c(ABOUT_APP, "help.about"),
             ],
         ),
-    ]
+    ])
+}
+
+/// `tree` without the ArtCraft community entries (Discord, the ArtCraft website and app page) in
+/// the SimpleHub build, which keeps the link to the source on GitHub.
+fn without_community(mut tree: Vec<(&'static str, Vec<Item>)>) -> Vec<(&'static str, Vec<Item>)> {
+    if cfg!(feature = "simplehub") {
+        for (_, items) in &mut tree {
+            items.retain(|i| !matches!(i, Item::Cmd(_, "help.discord" | "help.website" | "help.appPage", _)));
+        }
+    }
+    tree
 }
 
 /// Object → Transform (also in the canvas context menu).

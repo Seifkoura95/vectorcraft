@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use vectorcraft_engine::Session;
 use vectorcraft_engine::cmd::clipboard::{FILE_HEAD, Flavour, PASTE_ORDER, file_flavour, is_address};
+#[cfg(not(feature = "simplehub"))]
 use vectorcraft_engine::cmd::fileio;
 use vectorcraft_engine::cmd::recovery::{self, Hold, RecoveryStore};
 use vectorcraft_ui_egui::graphics::GraphicsLoss;
@@ -52,8 +53,12 @@ struct Host {
     locks: Option<WebLocks>,
     /// Graphics restarts so far.
     restarts: u32,
+    /// SimpleHub's bridge object, which opens and saves files for the app (see [`simplehub`]).
+    #[cfg(feature = "simplehub")]
+    bridge: wasm_bindgen::JsValue,
 }
 
+#[cfg(not(feature = "simplehub"))]
 pub fn start() {
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
     let Some(canvas) = element(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok()) else {
@@ -74,7 +79,9 @@ pub fn start() {
             restarts: 0,
         };
         track_paste(&host.pasted);
-        run(host, canvas, None).await;
+        if let Err(e) = run(host, canvas, None).await {
+            notice(&[&format!("VectorCraft failed to start: {}", js_err(e)), "A browser with WebGPU or WebGL2 is required."]);
+        }
     });
 }
 
@@ -86,8 +93,9 @@ struct Moving {
 }
 
 /// Run the app on `canvas`: the `moving` one when starting again after losing the graphics, else
-/// a new one.
-async fn run(host: Host, canvas: web_sys::HtmlCanvasElement, moving: Option<Moving>) {
+/// a new one. `Err` when a new app couldn't start (a failed restart is handled here: the page
+/// says so and gives up).
+async fn run(host: Host, canvas: web_sys::HtmlCanvasElement, moving: Option<Moving>) -> Result<(), wasm_bindgen::JsValue> {
     track_drag(&canvas, &host.drag);
     let kept = moving.as_ref().map(|m| m.kept);
     // The app until the new runner takes it (still here if starting fails before).
@@ -107,7 +115,7 @@ async fn run(host: Host, canvas: web_sys::HtmlCanvasElement, moving: Option<Movi
                     rs.device.set_device_lost_callback(move |reason, msg| loss.report(&ctx, format!("{reason:?}: {msg}")));
                 }
                 host.pasted.borrow_mut().ctx = Some(ctx.clone());
-                let services = services(host.inbox.clone(), host.place_inbox.clone(), ctx.clone(), host.locks.clone());
+                let services = services(&host, ctx.clone());
                 let app = match taken.borrow_mut().take() {
                     Some(mut app) => {
                         // The old services asked the old context for frames.
@@ -126,11 +134,13 @@ async fn run(host: Host, canvas: web_sys::HtmlCanvasElement, moving: Option<Movi
             if let Some(el) = element(LOADING_ID) {
                 el.remove();
             }
+            Ok(())
         }
-        (Err(e), None) => notice(&[&format!("VectorCraft failed to start: {}", js_err(e)), "A browser with WebGPU or WebGL2 is required."]),
+        (Err(e), None) => Err(e),
         (Err(e), Some(kept)) => {
             log::error!("vectorcraft-web: couldn't restart the graphics: {}", js_err(e));
             give_up(slot.borrow_mut().take(), kept);
+            Ok(())
         }
     }
 }
@@ -325,7 +335,10 @@ impl WebShell {
         let canvas =
             if host.restarts > MAX_RESTARTS { Err(format!("the graphics were lost {MAX_RESTARTS} times")) } else { fresh_canvas(&self.canvas) };
         match canvas {
-            Ok(canvas) => wasm_bindgen_futures::spawn_local(run(host, canvas, Some(Moving { app, kept }))),
+            // A failed restart is handled in `run` (it gives up and says so).
+            Ok(canvas) => wasm_bindgen_futures::spawn_local(async move {
+                run(host, canvas, Some(Moving { app, kept })).await.ok();
+            }),
             Err(e) => {
                 log::error!("vectorcraft-web: giving up on the graphics: {e}");
                 let runner = host.runner;
@@ -387,13 +400,43 @@ impl eframe::App for WebShell {
     }
 }
 
-fn services(inbox: Inbox, place_inbox: PlaceInbox, ctx: egui::Context, locks: Option<WebLocks>) -> Services {
-    let open_inbox = inbox.clone();
-    let picked = place_inbox.clone();
-    let place_ctx = ctx.clone();
+/// The app's services on the web: files through the browser's file picker and downloads (the
+/// standalone page) or through SimpleHub's bridge; the rest is the same.
+fn services(host: &Host, ctx: egui::Context) -> Services {
+    #[cfg(not(feature = "simplehub"))]
+    let files = picker_files(host.inbox.clone(), host.place_inbox.clone(), ctx);
+    #[cfg(feature = "simplehub")]
+    let files = simplehub::bridge_files(host.bridge.clone(), host.inbox.clone(), host.place_inbox.clone(), ctx);
     Services {
+        place_async: Some(files.place),
+        open_async: Some(files.open),
+        download: Some(files.download),
+        place_inbox: Some(host.place_inbox.clone()),
+        inbox: Some(host.inbox.clone()),
+        recovery_store: Some(Arc::new(BrowserStore { locks: host.locks.clone() })),
+        // File → Print: the browser's print dialog.
+        print: Some(Box::new(BrowserPrint)),
+        ..Default::default()
+    }
+}
+
+/// How files get in and out: File → Open and File → Place… (bytes arrive through the inboxes),
+/// and Save / Export (`download`: name, bytes).
+struct FileServices {
+    open: Box<dyn FnMut()>,
+    place: Box<dyn FnMut()>,
+    download: Box<dyn FnMut(&str, &[u8])>,
+}
+
+/// The standalone page's files: the browser's file picker, and downloads.
+#[cfg(not(feature = "simplehub"))]
+fn picker_files(inbox: Inbox, place_inbox: PlaceInbox, ctx: egui::Context) -> FileServices {
+    let open_inbox = inbox;
+    let picked = place_inbox;
+    let place_ctx = ctx.clone();
+    FileServices {
         // File → Place…: the picked files go to the Place dialog.
-        place_async: Some(Box::new(move || {
+        place: Box::new(move || {
             let inbox = picked.clone();
             let ctx = place_ctx.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -408,9 +451,8 @@ fn services(inbox: Inbox, place_inbox: PlaceInbox, ctx: egui::Context, locks: Op
                 inbox.lock().unwrap_or_else(|e| e.into_inner()).extend(arrived);
                 ctx.request_repaint();
             });
-        })),
-        place_inbox: Some(place_inbox),
-        open_async: Some(Box::new(move || {
+        }),
+        open: Box::new(move || {
             let inbox = open_inbox.clone();
             let ctx = ctx.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -422,17 +464,12 @@ fn services(inbox: Inbox, place_inbox: PlaceInbox, ctx: egui::Context, locks: Op
                 inbox.lock().unwrap_or_else(|e| e.into_inner()).push((file.file_name(), bytes));
                 ctx.request_repaint();
             });
-        })),
-        download: Some(Box::new(|name: &str, bytes: &[u8]| {
+        }),
+        download: Box::new(|name: &str, bytes: &[u8]| {
             if let Err(e) = download(name, bytes) {
                 log::error!("download of {name} failed: {e}");
             }
-        })),
-        inbox: Some(inbox),
-        recovery_store: Some(Arc::new(BrowserStore { locks })),
-        // File → Print: the browser's print dialog.
-        print: Some(Box::new(BrowserPrint)),
-        ..Default::default()
+        }),
     }
 }
 
@@ -488,6 +525,7 @@ impl RecoveryStore for BrowserStore {
 }
 
 /// Trigger a browser download of `bytes` named after the last component of `path`.
+#[cfg(not(feature = "simplehub"))]
 fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
     let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
     let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "vectorcraft".into());
@@ -568,4 +606,133 @@ fn print_pdf(pdf: &[u8]) -> Result<(), String> {
     frame.set_src(&url);
     document.body().ok_or("no body")?.append_child(&frame).map_err(js_err)?;
     Ok(())
+}
+
+/// Simple Vector inside SimpleHub. The page mounts the app on a canvas it owns and hands over a
+/// bridge object (`open(purpose): Promise<{name, bytes}|null>`, `save(name, bytes): Promise<void>`)
+/// that moves files to and from Simple Cloud; nothing here touches the browser's file picker.
+/// `purpose` is `"document"` for File → Open and `"place"` for File → Place…, so the host can
+/// filter what it offers. Drops, pastes, Data Recovery and Print work as on the standalone page.
+#[cfg(feature = "simplehub")]
+mod simplehub {
+    use std::sync::Arc;
+
+    use super::{FileServices, Host, Inbox, PlaceArrival, PlaceInbox, WebLocks, detect_language, run, track_paste};
+    use wasm_bindgen::JsCast as _;
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen_futures::JsFuture;
+
+    /// A running instance. SimpleHub calls `destroy` when the module unmounts.
+    #[wasm_bindgen]
+    pub struct VectorHandle {
+        runner: eframe::WebRunner,
+    }
+
+    #[wasm_bindgen]
+    impl VectorHandle {
+        pub fn destroy(&self) {
+            self.runner.destroy();
+        }
+
+        pub fn has_panicked(&self) -> bool {
+            self.runner.has_panicked()
+        }
+    }
+
+    /// Starts Simple Vector on `canvas`, with `bridge` providing open and save.
+    #[wasm_bindgen]
+    pub async fn start_simple_vector(canvas: web_sys::HtmlCanvasElement, bridge: JsValue) -> Result<VectorHandle, JsValue> {
+        eframe::WebLogger::init(log::LevelFilter::Info).ok();
+        detect_language();
+        // Before the first frame, which looks for copies a crash left behind.
+        let locks = WebLocks::start(super::RECOVERY_PREFIX).await;
+        let host = Host {
+            runner: eframe::WebRunner::new(),
+            inbox: Arc::default(),
+            place_inbox: Arc::default(),
+            drag: Default::default(),
+            pasted: Default::default(),
+            locks,
+            restarts: 0,
+            bridge,
+        };
+        track_paste(&host.pasted);
+        let runner = host.runner.clone();
+        run(host, canvas, None).await?;
+        Ok(VectorHandle { runner })
+    }
+
+    /// Files through the bridge: `open("document")` for File → Open, `open("place")` for
+    /// File → Place…, `save(name, bytes)` for Save and Export.
+    pub(super) fn bridge_files(bridge: JsValue, inbox: Inbox, place_inbox: PlaceInbox, ctx: egui::Context) -> FileServices {
+        let (open_bridge, place_bridge) = (bridge.clone(), bridge.clone());
+        let place_ctx = ctx.clone();
+        FileServices {
+            open: Box::new(move || {
+                let bridge = open_bridge.clone();
+                let inbox = inbox.clone();
+                let ctx = ctx.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    match call_open(&bridge, "document").await {
+                        Ok(Some((name, bytes))) => {
+                            inbox.lock().unwrap_or_else(|e| e.into_inner()).push((name, bytes));
+                            ctx.request_repaint();
+                        }
+                        Ok(None) => {}
+                        Err(e) => log::error!("SimpleHub open failed: {e:?}"),
+                    }
+                });
+            }),
+            place: Box::new(move || {
+                let bridge = place_bridge.clone();
+                let inbox = place_inbox.clone();
+                let ctx = place_ctx.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    match call_open(&bridge, "place").await {
+                        Ok(Some((name, bytes))) => {
+                            inbox.lock().unwrap_or_else(|e| e.into_inner()).push(PlaceArrival { name, bytes, drop: None });
+                            ctx.request_repaint();
+                        }
+                        Ok(None) => {}
+                        Err(e) => log::error!("SimpleHub place failed: {e:?}"),
+                    }
+                });
+            }),
+            download: Box::new(move |name: &str, bytes: &[u8]| {
+                let bridge = bridge.clone();
+                let name = std::path::Path::new(name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled.vectorcraft".into());
+                let bytes = js_sys::Uint8Array::from(bytes);
+                wasm_bindgen_futures::spawn_local(async move {
+                    if let Err(e) = call_save(&bridge, &name, &bytes).await {
+                        log::error!("SimpleHub save of {name} failed: {e:?}");
+                    }
+                });
+            }),
+        }
+    }
+
+    fn method(bridge: &JsValue, name: &str) -> Result<js_sys::Function, JsValue> {
+        js_sys::Reflect::get(bridge, &JsValue::from_str(name))?
+            .dyn_into::<js_sys::Function>()
+            .map_err(|_| JsValue::from_str(&format!("bridge.{name} is not a function")))
+    }
+
+    async fn call_open(bridge: &JsValue, purpose: &str) -> Result<Option<(String, Vec<u8>)>, JsValue> {
+        let promise: js_sys::Promise = method(bridge, "open")?.call1(bridge, &JsValue::from_str(purpose))?.dyn_into()?;
+        let result = JsFuture::from(promise).await?;
+        if result.is_null() || result.is_undefined() {
+            return Ok(None);
+        }
+        let name = js_sys::Reflect::get(&result, &JsValue::from_str("name"))?.as_string().unwrap_or_else(|| "Untitled.vectorcraft".into());
+        let bytes: js_sys::Uint8Array = js_sys::Reflect::get(&result, &JsValue::from_str("bytes"))?.dyn_into()?;
+        Ok(Some((name, bytes.to_vec())))
+    }
+
+    async fn call_save(bridge: &JsValue, name: &str, bytes: &js_sys::Uint8Array) -> Result<(), JsValue> {
+        let ret = method(bridge, "save")?.call2(bridge, &JsValue::from_str(name), bytes)?;
+        if let Ok(promise) = ret.dyn_into::<js_sys::Promise>() {
+            JsFuture::from(promise).await?;
+        }
+        Ok(())
+    }
 }
