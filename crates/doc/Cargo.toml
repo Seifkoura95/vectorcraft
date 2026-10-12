@@ -22,3 +22,7 @@ thiserror = { workspace = true }
 [dev-dependencies]
 jpeg-encoder = { workspace = true }
 proptest = { workspace = true }
+
+[features]
+# SimpleHub build: metadata written into exported files names Simple Vector.
+simplehub = []

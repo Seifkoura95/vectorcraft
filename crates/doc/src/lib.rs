@@ -98,6 +98,11 @@ use serde::{Deserialize, Serialize};
 use vectorcraft_color::{Swatch, SwatchGroup};
 use vectorcraft_geom::{Point, Rect, Vec2};
 
+/// The application named in metadata written into exported files (PDF/AI creator and producer,
+/// EPS `%%Creator`, TIFF `Software`, EMF description, the native file's `generator`): the
+/// `simplehub` feature names Simple Vector.
+pub const PRODUCT_NAME: &str = if cfg!(feature = "simplehub") { "Simple Vector" } else { "VectorCraft" };
+
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum DocError {
     #[error("no such object {0}")]

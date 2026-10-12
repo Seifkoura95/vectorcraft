@@ -37,3 +37,7 @@ log = { workspace = true }
 vectorcraft-testkit = { workspace = true }
 proptest = { workspace = true }
 wat = { workspace = true }
+
+[features]
+# SimpleHub build: metadata written into exported files names Simple Vector.
+simplehub = ["vectorcraft-doc/simplehub"]

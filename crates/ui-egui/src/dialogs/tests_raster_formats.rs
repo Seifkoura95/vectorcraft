@@ -114,7 +114,7 @@ fn webp_options_say_the_file_is_lossless() {
 fn save_for_office_documents_picks_the_resolution() {
     let (mut app, written) = app(2);
     let item = crate::menus::menu_entries(&app).into_iter().find(|e| e.command.as_deref() == Some("document.exportForOffice")).unwrap();
-    assert_eq!((item.path[0].as_str(), item.label.as_str(), item.enabled), ("File", "Save for Office Documents…", true));
+    assert_eq!((item.path[0].as_str(), item.label.as_str(), item.enabled), ("File", "Save for Documents and Slides…", true));
     app.run("document.exportForOffice", json!({})).unwrap();
     assert_eq!(kind(&app), Some("saveForOffice"));
     frame(&mut app);

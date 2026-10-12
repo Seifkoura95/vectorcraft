@@ -1919,7 +1919,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<Item>)> {
                 c("Save a Copy…", "file.saveCopy"),
                 c("Save as Template…", "file.saveAsTemplate"),
                 c("Save as PDF…", "file.export.pdf"),
-                c("Save for Office Documents…", "document.exportForOffice"),
+                c("Save for Documents and Slides…", "document.exportForOffice"),
                 c("Revert", "file.revert"),
                 Sep,
                 c("Place…", "file.place"),

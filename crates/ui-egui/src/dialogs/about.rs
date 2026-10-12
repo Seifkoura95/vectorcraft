@@ -75,6 +75,12 @@ fn about_tab(app: &mut VectorcraftApp, ui: &mut egui::Ui) {
             )
             .size(11.0),
         );
+        ui.label(
+            egui::RichText::new(
+                "Not affiliated with or endorsed by Adobe, Microsoft, Autodesk or Avid. Other product names are trademarks of their respective owners.", // brand-ok: the non-affiliation notice names the vendors on purpose
+            )
+            .size(11.0),
+        );
         ui.hyperlink_to("github.com/storytold/vectorcraft", "https://github.com/storytold/vectorcraft");
     } else {
         crate::community::links(app, ui);

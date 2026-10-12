@@ -139,7 +139,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(
             "document.exportForOffice",
-            "Save for Office Documents…",
+            "Save for Documents and Slides…",
             ["File"],
             None,
             "{path?, ppi?: 150 (72, 150, 300… pixels per inch), transparent?: false (else on white), artboard?: 0} the artboard as a PNG for office documents and slides → {path, bytes, width, height} (pixels); no path → {dataBase64, bytes, width, height}",

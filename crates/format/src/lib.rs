@@ -284,7 +284,7 @@ pub fn save_with(doc: &Document, o: &SaveOptions) -> Result<Vec<u8>, FormatError
     // Older apps only know the name from before the rename.
     w.field("format", &if o.version < 3 { LEGACY_EXTENSION } else { EXTENSION })?;
     w.field("version", &o.version)?;
-    w.field("generator", &format!("VectorCraft {}", env!("CARGO_PKG_VERSION")))?;
+    w.field("generator", &format!("{} {}", vectorcraft_doc::PRODUCT_NAME, env!("CARGO_PKG_VERSION")))?;
     if let Some(png) = &o.preview {
         w.field("preview", &blob("image/png", png))?;
     }

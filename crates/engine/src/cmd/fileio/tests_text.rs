@@ -83,5 +83,5 @@ fn save_for_office_writes_a_png_at_the_resolution() {
     assert!(s.execute("document.exportForOffice", &json!({"artboard": 2})).is_err());
     assert!(s.execute("document.exportForOffice", &json!({"ppi": -3})).is_err());
     let spec = crate::cmd::find_command("document.exportForOffice").unwrap();
-    assert_eq!((spec.label, spec.menu), ("Save for Office Documents…", &["File"][..]));
+    assert_eq!((spec.label, spec.menu), ("Save for Documents and Slides…", &["File"][..]));
 }
